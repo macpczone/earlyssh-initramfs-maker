@@ -183,18 +183,16 @@ EOF
 # This could be adjusted to take keys for better security
 cat << EOF > ${RD}/root/unlock
 #!/bin/sh
-if [ -z "\$1" ]; then
-	echo "Invalid passphrase"
-	exit 1
-fi
 for x in \$(cat /proc/cmdline); do
 	case "\${x}" in 
-		crypt_root=*)
-			CRYPT_ROOT=\${x#*=}
+		dev_root=*)
+			DEV_ROOT=\${x#*=}
 		;;
 	esac
 done
-/sbin/cryptsetup luksOpen \${CRYPT_ROOT} ${MAPPER}
+/sbin/cryptsetup luksOpen \${DEV_ROOT} ${MAPPER}
+/sbin/vgchange -ay
+/sbin/vgscan --mknodes
 EOF
 
 chmod +x ${RD}/init
