@@ -19,7 +19,7 @@ RD=$(mktemp -d)
 
 # Prepare basic structure and copy basic files and bins
 # This assumes dropbear and busybox are built static
-mkdir -p ${RD}/{bin,dev,etc/dropbear,lib64,mnt/root,proc,root/.ssh,sys,usr/sbin,var/log,var/run}
+mkdir -p ${RD}/{bin,sbin,dev,etc/dropbear,lib64,mnt/root,proc,root/.ssh,sys,usr/sbin,var/log,var/run}
 cp -a /sbin/busybox ${RD}/bin/busybox
 cp -a /etc/localtime ${RD}/etc/
 
@@ -86,13 +86,16 @@ done
 cat << EOF > ${RD}/init
 #!/bin/busybox sh
 
-/bin/busybox mkdir -p /usr/sbin /usr/bin /sbin /bin
+/bin/busybox mkdir -p /usr/bin /mnt/root
 /bin/busybox --install -s
 touch /var/log/lastlog
 
 mount -t devtmpfs none /dev
 mount -t proc proc /proc
 mount -t sysfs none /sys
+/bin/busybox mkdir /dev/pts /dev/shm
+/bin/busybox mount -t devpts none /dev/pts
+/bin/busybox mount -t tmpfs none /dev/shm
 
 # Root partition and networking could be different between machines so take those configs from the 
 # kernel command line
@@ -100,6 +103,9 @@ for x in \$(cat /proc/cmdline); do
 	case "\${x}" in
 		crypt_root=*)
 			CRYPT_ROOT=\${x#*=}
+		;;
+		dev_root=*)
+			DEV_ROOT=\${x#*=}
 		;;
 		net_ipv4=*)
 			NET_IPv4=\${x#*=}
@@ -114,17 +120,34 @@ done
 ifconfig ${NET_NIC} \${NET_IPv4}
 route add default gw \${NET_GW}
 
+cat > /etc/motd <<- EOT
+	Welcome to early-ssh for Centos 6!
+	
+	Type ./unlock and then enter the password for the encrypted volume
+
+	Please send your comments and bugreports to github.com
+	EOT
+
 # Start dropbear sshd
 /usr/sbin/dropbear -s -g -p $SSH_PORT -B
 
 sleep 1
 clear
-echo "Waiting for root unlock..."
+echo "Press x to enter LUKS password or wait for the root ssh unlock..."
 
 # Wait for the unlocked root mapper to appear
-while [ ! -e /dev/mapper/${MAPPER} ]; do
-	sleep 1
+while [ ! -e /dev/mapper/\${CRYPT_ROOT} ]; do
+    read -n 1 -t 1 input
+    echo -n "."
+    if [ "$input" == "x" ]; then
+		echo ""
+		sleep 1
+		/sbin/cryptsetup luksOpen \${DEV_ROOT} ${MAPPER}
+		/sbin/vgchange -ay
+		/sbin/vgscan --mknodes
+    fi
 done
+
 mount -o ro /dev/mapper/${MAPPER} /mnt/root
 
 # We kill dropbear or else it will remain in memory and OpenSSH won't be able to bind to the same port!
@@ -132,12 +155,28 @@ killall dropbear
 ifconfig ${NET_NIC} 0.0.0.0
 ifconfig ${NET_NIC} down
 
-umount /sys
-umount /proc
-umount /dev
+for i in \$(export -p); do
+    i=\${i#declare -x}
+    i=\${i#export}
+    i=\${i%%=*}
+    [ "\$i" = "root" -o "\$i" = "PATH" -o "\$i" = "HOME" -o "\$i" = "TERM" ] || unset $i
+done
 
+umount /dev/pts
+umount /dev/shm
+
+echo "Switching the root"
+sleep 1
+#/bin/busybox sh
+
+mount -n --move /proc /mnt/root/proc
+mount -n --move /sys /mnt/root/sys
+mount -n --move /dev /mnt/root/dev
+cd /mnt/root
 # Off we go!
-exec switch_root /mnt/root /sbin/init
+exec switch_root -c /dev/console /mnt/root /sbin/init auto
+echo "We have crashed out, I wonder why?"
+/bin/busybox sh
 EOF
 
 # A very simplistic unlocking helper script that takes a passphrase
