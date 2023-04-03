@@ -125,7 +125,7 @@ cat > /etc/motd <<- EOT
 	
 	Type ./unlock and then enter the password for the encrypted volume
 
-	Please send your comments and bugreports to github.com
+	Please send your comments and bugreports to https://github.com/macpczone/earlyssh-initramfs-maker/issues
 	EOT
 
 # Start dropbear sshd
